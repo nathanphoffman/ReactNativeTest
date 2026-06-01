@@ -1,9 +1,11 @@
 import { Platform, Pressable, PressableProps } from "react-native";
+import { ReactNode } from "react";
 
 export interface ButtonProps extends PressableProps {
   className?: string;
   onClick?: (e?: any) => void;
   type?: "button" | "submit" | "reset";
+  children?: ReactNode;
 }
 
 export function Button({ children, className, style, onClick, type = "button", ...props }: ButtonProps) {

@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """
-Build pipeline for .pyx (Python + JSX) React Native components.
+Build pipeline for .pyx (Python + JSX) React Native / web components.
 
 Workflow:
-  1. Parse # !js-import: and # !js-export: directives
+  1. Parse directives: # !js-import:, # !js-export:, # !next:, @export_default
   2. Extract <jsx>...</jsx> blocks → string placeholders (with nesting guard)
+  2a. Auto-capitalize html tags + inject ./html import  [native only]
   2b. Batch-compile Python expressions inside JSX {} through Transcrypt
+  2c. Transform platform props: rn:attr → attr [native] / strip rn: [web]
   3. Run Transcrypt on the resulting valid-Python source
   4. Strip Transcrypt boilerplate from output JS
   5. Re-inject JSX where the placeholders were
   6. Assemble: imports + JS body + export → .jsx file
+
+Targets:
+  --target native  (default) Expo / React Native output alongside .pyx file
+  --target web               Next.js output in web/app/components/
 """
 
+import argparse
 import os
 import re
 import sys
@@ -47,7 +54,7 @@ def _auto_capitalize(
         slash, name, after = m.group(1), m.group(2), m.group(3)
         capitalized = name[0].upper() + name[1:]
         if name in html_map:
-            used.add(html_map[name])   # html_map already keyed by lowercase
+            used.add(html_map[name])
         return f'<{slash}{capitalized}{after}'
 
     updated = [tag_re.sub(replace_tag, block) for block in jsx_blocks]
@@ -83,7 +90,6 @@ def _find_jsx_exprs(block: str):
 
 def _compile_jsx_exprs(jsx_blocks: list[str], pyx_path: str) -> list[str]:
     """Batch-compile Python expressions inside JSX {} through Transcrypt."""
-    # Collect all expressions: (block_idx, start, end, expr_str)
     candidates: list[tuple[int, int, int, str]] = []
     for bi, block in enumerate(jsx_blocks):
         for start, end, expr in _find_jsx_exprs(block):
@@ -92,7 +98,6 @@ def _compile_jsx_exprs(jsx_blocks: list[str], pyx_path: str) -> list[str]:
     if not candidates:
         return jsx_blocks
 
-    # One temp file: __pyx_jexpr_N__ = <expr>  for each candidate
     batch_lines = [
         f"__pyx_jexpr_{i}__ = {expr}"
         for i, (_, _, _, expr) in enumerate(candidates)
@@ -115,9 +120,7 @@ def _compile_jsx_exprs(jsx_blocks: list[str], pyx_path: str) -> list[str]:
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-    # Extract compiled RHS values using brace-depth tracking so that function
-    # bodies like `function () {return x;}` are captured in full, not cut at
-    # the first semicolon inside the body.
+    # Brace-depth RHS extraction — handles function bodies correctly
     compiled: dict[int, str] = {}
     for idx in range(len(candidates)):
         marker = f'var __pyx_jexpr_{idx}__'
@@ -138,7 +141,6 @@ def _compile_jsx_exprs(jsx_blocks: list[str], pyx_path: str) -> list[str]:
                 break
             i += 1
 
-    # Substitute back — process each block's replacements in reverse offset order
     jsx_blocks = list(jsx_blocks)
     by_block: dict[int, list[tuple[int, int, int]]] = {}
     for i, (bi, start, end, _) in enumerate(candidates):
@@ -154,13 +156,64 @@ def _compile_jsx_exprs(jsx_blocks: list[str], pyx_path: str) -> list[str]:
     return jsx_blocks
 
 
-def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
+def _strip_attrs(block: str, name_pattern: str) -> str:
+    """Remove JSX attributes whose names match name_pattern, with their values."""
+    attr_re = re.compile(r'(\s+)(' + name_pattern + r')(=(?:"[^"]*"|\'[^\']*\'|\{))?')
+    result = []
+    i = 0
+    while i < len(block):
+        m = attr_re.search(block, i)
+        if not m:
+            result.append(block[i:])
+            break
+        result.append(block[i:m.start()])
+        if m.group(3) and m.group(3).endswith('{'):
+            # Brace-depth scan to consume the full value including nested {}
+            j, depth = m.end(), 1
+            while j < len(block) and depth > 0:
+                if block[j] == '{':
+                    depth += 1
+                elif block[j] == '}':
+                    depth -= 1
+                j += 1
+            i = j
+        else:
+            i = m.end()
+    return ''.join(result)
+
+
+def _transform_props(jsx_blocks: list[str], target: str) -> list[str]:
+    """
+    native: convert rn:attr → attr (strip the prefix)
+    web:    strip rn:attr entirely
+    """
+    result = []
+    for block in jsx_blocks:
+        if target == 'native':
+            block = re.sub(r'\brn:(\w+)', r'\1', block)
+        else:
+            block = _strip_attrs(block, r'rn:\w+')
+        result.append(block)
+    return result
+
+
+def _web_output_path(pyx_path: str) -> str:
+    """Derive the web output path: web/app/components/<Name>.jsx from repo root."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    name = os.path.splitext(os.path.basename(pyx_path))[0]
+    out_dir = os.path.join(repo_root, 'web', 'app', 'components')
+    os.makedirs(out_dir, exist_ok=True)
+    return os.path.join(out_dir, f'{name}.jsx')
+
+
+def build_pyx(pyx_path: str, output_path: str | None = None, target: str = 'native') -> None:
     with open(pyx_path) as f:
         source = f.read()
 
-    # --- 1. Extract JS directives (kept out of the Python source) ---
+    # --- 1. Extract directives ---
     js_imports: list[str] = []
     js_export = ""
+    next_directives: list[str] = []
     clean_lines: list[str] = []
 
     lines = source.splitlines()
@@ -171,8 +224,9 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
             js_imports.append(stripped[len("# !js-import:"):].strip())
         elif stripped.startswith("# !js-export:"):
             js_export = stripped[len("# !js-export:"):].strip()
+        elif stripped.startswith("# !next:"):
+            next_directives.append(stripped[len("# !next:"):].strip())
         elif stripped == "@export_default":
-            # Look ahead for the def line to extract the function name
             j = i + 1
             while j < len(lines) and not lines[j].strip().startswith("def "):
                 j += 1
@@ -180,7 +234,6 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
                 m = re.match(r"\s*def\s+(\w+)\s*\(", lines[j])
                 if m:
                     js_export = f"export default {m.group(1)}"
-            # Decorator line is consumed — don't add to clean_lines
         else:
             clean_lines.append(lines[i])
         i += 1
@@ -191,7 +244,6 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
     jsx_blocks: list[str] = []
     pattern = re.compile(r'<jsx>(.*?)</jsx>', re.DOTALL)
 
-    # Nesting guard: a <jsx> inside another <jsx> is always a mistake
     for m in pattern.finditer(source):
         if '<jsx>' in m.group(1):
             print(
@@ -208,15 +260,19 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
 
     source = pattern.sub(store_jsx, source)
 
-    # --- 2a. Auto-capitalize html tags + inject ./html import ---
-    html_map = _discover_html_components(pyx_path)
-    jsx_blocks, html_import = _auto_capitalize(jsx_blocks, html_map, pyx_path)
-    if html_import:
-        js_imports = [l for l in js_imports if "'./html'" not in l and '"./html"' not in l]
-        js_imports.append(html_import)
+    # --- 2a. Auto-capitalize html tags + inject ./html import [native only] ---
+    if target == 'native':
+        html_map = _discover_html_components(pyx_path)
+        jsx_blocks, html_import = _auto_capitalize(jsx_blocks, html_map, pyx_path)
+        if html_import:
+            js_imports = [l for l in js_imports if "'./html'" not in l and '"./html"' not in l]
+            js_imports.append(html_import)
 
     # --- 2b. Compile Python expressions inside JSX {} through Transcrypt ---
     jsx_blocks = _compile_jsx_exprs(jsx_blocks, pyx_path)
+
+    # --- 2c. Transform platform-specific props ---
+    jsx_blocks = _transform_props(jsx_blocks, target)
 
     # --- 3. Write to a temp dir and run Transcrypt ---
     component_name = os.path.splitext(os.path.basename(pyx_path))[0]
@@ -244,23 +300,14 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     # --- 4. Strip Transcrypt boilerplate ---
-    # Header comment: "// Transcrypt'ed from Python, ..."
     js = re.sub(r"^//\s*Transcrypt.*?\n", "", js, flags=re.MULTILINE)
-    # Transcrypt runtime import (org.transcrypt.__runtime__.js) — not available in RN
     js = re.sub(
         r"^import\s*\{[^}]+\}\s*from\s*['\"][^'\"]*__runtime__[^'\"]*['\"];\s*\n",
-        "",
-        js,
-        flags=re.MULTILINE,
+        "", js, flags=re.MULTILINE,
     )
-    # Source map reference (make trailing newline optional in case it's the last line)
     js = re.sub(r"^//# sourceMappingURL=.*\n?", "", js, flags=re.MULTILINE)
-    # 'use strict'; lines
     js = re.sub(r"^\s*'use strict';\s*\n", "", js, flags=re.MULTILINE)
-    # var __name__ = '...'; lines
     js = re.sub(r"^\s*var __name__\s*=.*?;\s*\n", "", js, flags=re.MULTILINE)
-    # Transcrypt emits `export var Foo = function`; strip the `export` keyword
-    # since we append an explicit export directive ourselves
     js = re.sub(r"^export (var \w+)", r"\1", js, flags=re.MULTILINE)
     js = js.strip()
 
@@ -273,24 +320,42 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
     js = re.sub(r'[\'"]__PYX_JSX_(\d+)__[\'"]', reinsert, js)
 
     # --- 6. Assemble final file ---
+    # Prepend Next.js directives (e.g. 'use client') for web target
+    prefix = ""
+    if target == 'web':
+        for d in next_directives:
+            prefix += f"'{d}';\n"
+
     header = "\n".join(js_imports)
     parts = [header, "", js]
     if js_export:
         parts += ["", js_export]
-    output = "\n".join(parts) + "\n"
+    output = prefix + "\n".join(parts) + "\n"
 
     if output_path is None:
-        output_path = os.path.splitext(pyx_path)[0] + ".jsx"
+        output_path = (
+            _web_output_path(pyx_path) if target == 'web'
+            else os.path.splitext(pyx_path)[0] + ".jsx"
+        )
 
     with open(output_path, "w") as f:
         f.write(output)
 
-    print(f"Built  {pyx_path}  →  {output_path}")
+    print(f"Built [{target}]  {pyx_path}  →  {output_path}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        # No args: find and build all .pyx files under components/
+    parser = argparse.ArgumentParser(description="Build .pyx components")
+    parser.add_argument('files', nargs='*', help='.pyx files to build (default: all)')
+    parser.add_argument('--target', choices=['native', 'web'], default='native')
+    args = parser.parse_args()
+
+    target = args.target
+
+    if args.files:
+        for pyx in args.files:
+            build_pyx(pyx, target=target)
+    else:
         root = os.path.join(os.path.dirname(__file__), "..", "components")
         pyx_files = []
         for dirpath, _, filenames in os.walk(root):
@@ -301,8 +366,4 @@ if __name__ == "__main__":
             print("No .pyx files found.", file=sys.stderr)
             sys.exit(0)
         for pyx in pyx_files:
-            build_pyx(pyx)
-    else:
-        pyx = sys.argv[1]
-        out = sys.argv[2] if len(sys.argv) > 2 else None
-        build_pyx(pyx, out)
+            build_pyx(pyx, target=target)

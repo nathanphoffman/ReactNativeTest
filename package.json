@@ -8,8 +8,12 @@
     "ios": "npm run build:pyx && concurrently \"expo start --ios\" \"npm run watch:pyx\"",
     "web": "npm run build:pyx && concurrently \"expo start --web\" \"npm run watch:pyx\"",
     "build:pyx": "python3 scripts/build_pyx.py",
+    "build:pyx:web": "python3 scripts/build_pyx.py --target web",
     "watch:pyx": "chokidar \"components/**/*.pyx\" -c \"python3 scripts/build_pyx.py {path}\"",
-    "setup:pyx": "pip install transcrypt"
+    "watch:pyx:web": "chokidar \"components/**/*.pyx\" -c \"python3 scripts/build_pyx.py --target web {path}\"",
+    "start:web": "npm run build:pyx:web && concurrently \"cd web && next dev\" \"npm run watch:pyx:web\"",
+    "setup:pyx": "pip install transcrypt",
+    "setup:web": "cd web && npm install"
   },
   "dependencies": {
     "expo": "~56.0.0",

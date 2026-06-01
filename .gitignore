@@ -57,6 +57,10 @@ yarn-error.log*
 web/.next/
 web/node_modules/
 
+# Build scripts compiled output
+scripts/node_modules/
+scripts/dist/
+
 # Generated .pyx web output (compiled from source, not hand-written)
 web/app/components/
 

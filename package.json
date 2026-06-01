@@ -3,19 +3,21 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "scripts": {
-    "start":   "npm run build:pyx:all && concurrently \"expo start\" \"npm run next:dev\" \"npm run watch:pyx:all\"",
+    "native": "npm run build:pyx:all && concurrently \"expo start\" \"npm run next:dev\" \"npm run watch:pyx:all\"",
     "android": "npm run build:pyx:all && concurrently \"expo start --android\" \"npm run next:dev\" \"npm run watch:pyx:all\"",
-    "ios":     "npm run build:pyx:all && concurrently \"expo start --ios\" \"npm run next:dev\" \"npm run watch:pyx:all\"",
-    "web":     "npm run build:pyx:all && concurrently \"expo start --web\" \"npm run next:dev\" \"npm run watch:pyx:all\"",
-    "start:web": "npm run build:pyx:web && concurrently --names \"next,pyx\" --prefix-colors \"cyan,yellow\" \"npm run next:dev\" \"npm run watch:pyx:web\"",
+    "ios": "npm run build:pyx:all && concurrently \"expo start --ios\" \"npm run next:dev\" \"npm run watch:pyx:all\"",
+    "start": "npm run native",
+    "next": "npm run build:pyx:web && concurrently --names \"next,pyx\" --prefix-colors \"cyan,yellow\" \"npm run next:dev\" \"npm run watch:pyx:web\"",
+    "web": "npm run build:pyx:all && concurrently \"expo start --web\" \"npm run next:dev\" \"npm run watch:pyx:all\"",
     "next:dev": "cd web && npm run dev",
-    "build:pyx": "python3 scripts/build_pyx.py",
-    "build:pyx:web": "python3 scripts/build_pyx.py --target web",
+    "build:pyx": "tsx scripts/src/cli.ts",
+    "build:pyx:web": "tsx scripts/src/cli.ts --target web",
     "build:pyx:all": "npm run build:pyx && npm run build:pyx:web",
-    "watch:pyx": "chokidar \"components/**/*.pyx\" \"components/**/*.html.jsx\" -c \"python3 scripts/build_pyx.py {path}\"",
-    "watch:pyx:web": "chokidar \"components/**/*.pyx\" \"components/**/*.html.jsx\" -c \"python3 scripts/build_pyx.py --target web {path}\"",
+    "watch:pyx": "chokidar \"components/**/*.pyx\" \"components/**/*.html.jsx\" -c \"tsx scripts/src/cli.ts {path}\"",
+    "watch:pyx:web": "chokidar \"components/**/*.pyx\" \"components/**/*.html.jsx\" -c \"tsx scripts/src/cli.ts --target web {path}\"",
     "watch:pyx:all": "concurrently \"npm run watch:pyx\" \"npm run watch:pyx:web\"",
-    "setup:pyx": "pip install transcrypt",
+    "typecheck:scripts": "cd scripts && npm run typecheck",
+    "setup:pyx": "pip install transcrypt && cd scripts && npm install",
     "setup:web": "cd web && npm install"
   },
   "dependencies": {
@@ -37,9 +39,11 @@
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
+    "@types/node": "^25.9.1",
     "@types/react": "^19.2.0",
     "chokidar-cli": "^3.0.0",
     "concurrently": "^10.0.1",
+    "tsx": "^4.22.4",
     "typescript": "^5.3.0"
   }
 }

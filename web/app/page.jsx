@@ -1,9 +1,5 @@
-import Test from './components/Test'
+import LandingPage from './components/LandingPage'
 
 export default function Home() {
-  return (
-    <main className="min-h-screen bg-gray-950">
-      <Test />
-    </main>
-  )
+  return <LandingPage />
 }

@@ -1,3 +1,4 @@
+'use client';
 import { useState } from 'react'
 
 var Hello = function () {
@@ -13,7 +14,7 @@ var Test = function (props) {
             <h1 className="text-white text-2xl font-bold tracking-tight">
                {count} Hello d2 from Pyth don 112212! {(f ? Hello () : '')}
             </h1>
-            <p className="text-indigo-400 text-sm mt-2" onPress={(function __lambda__ () {
+            <p className="text-indigo-400 text-sm mt-2" onClick={(function __lambda__ () {
 	return setCount (count + 1);
 })}>
                 Built via .pyx → Transcrypt → JSX reinsertion

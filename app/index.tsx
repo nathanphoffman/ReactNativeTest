@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Button, Div, H1, H2, Input, P, Section } from "../components/html";
+import Test from "../components/Test";
+
 
 export default function HomeScreen() {
   const [email, setEmail] = useState("");
@@ -12,9 +14,11 @@ export default function HomeScreen() {
             Hello World 2
           </H1>
           <H2 className="text-indigo-400 text-lg font-medium">
-            Expo Router + NativeWind v4
+            Expo Router + NativeWind v42
           </H2>
         </Div>
+
+        <Test></Test>
 
         <P className="text-gray-400 text-base leading-relaxed">
           A React Native starter with HTML-mirroring components, TypeScript, and

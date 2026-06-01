@@ -197,13 +197,100 @@ def _transform_props(jsx_blocks: list[str], target: str) -> list[str]:
     return result
 
 
-def _web_output_path(pyx_path: str) -> str:
+def _component_name(src_path: str) -> str:
+    """Extract bare component name from .pyx or .html.jsx source path."""
+    base = os.path.basename(src_path)
+    if base.endswith('.html.jsx'):
+        return base[:-len('.html.jsx')]
+    return os.path.splitext(base)[0]
+
+
+def _web_output_path(src_path: str) -> str:
     """Derive the web output path: web/app/components/<Name>.jsx from repo root."""
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    name = os.path.splitext(os.path.basename(pyx_path))[0]
     out_dir = os.path.join(repo_root, 'web', 'app', 'components')
     os.makedirs(out_dir, exist_ok=True)
-    return os.path.join(out_dir, f'{name}.jsx')
+    return os.path.join(out_dir, f'{_component_name(src_path)}.jsx')
+
+
+def build_jsx(jsx_path: str, target: str = 'native') -> None:
+    """
+    Process a hand-written .html.jsx source file → .jsx output.
+    Applies auto-capitalize, html import injection, and rn: prop transforms.
+    Skips if a .pyx counterpart exists (pass 1 handles it).
+    """
+    # Conflict check: Component.html.jsx vs Component.pyx
+    pyx_counterpart = os.path.join(
+        os.path.dirname(jsx_path),
+        _component_name(jsx_path) + '.pyx'
+    )
+    if os.path.exists(pyx_counterpart):
+        print(f"Skip  {jsx_path}  (pass 1 handles {os.path.basename(pyx_counterpart)})")
+        return
+
+    with open(jsx_path) as f:
+        source = f.read()
+
+    # Parse // !next: directives (JS-style comments for .html.jsx)
+    next_directives: list[str] = []
+    clean_lines: list[str] = []
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('// !next:'):
+            next_directives.append(stripped[len('// !next:'):].strip())
+        else:
+            clean_lines.append(line)
+    source = '\n'.join(clean_lines)
+
+    # Strip existing ./html import — will be regenerated
+    source = re.sub(
+        r"^import\s*\{[^}]*\}\s*from\s*['\"]\.\/html['\"];?\s*\n?",
+        '', source, flags=re.MULTILINE
+    )
+
+    # Auto-capitalize and inject ./html import [native only — web keeps lowercase HTML]
+    html_import = None
+    if target == 'native':
+        html_map = _discover_html_components(jsx_path)
+        [source], html_import = _auto_capitalize([source], html_map, jsx_path)
+
+    # Transform rn: props
+    [source] = _transform_props([source], target)
+
+    # Insert html import after the last existing import line
+    if html_import:
+        lines = source.splitlines()
+        last_import_idx = -1
+        for i, line in enumerate(lines):
+            if re.match(r'^import\s', line.strip()):
+                last_import_idx = i
+        if last_import_idx >= 0:
+            lines.insert(last_import_idx + 1, html_import)
+            source = '\n'.join(lines)
+        else:
+            source = html_import + '\n' + source
+
+    # Prepend Next.js directives for web target
+    prefix = ''
+    if target == 'web':
+        for d in next_directives:
+            prefix += f"'{d}';\n"
+
+    output = prefix + source
+
+    # Determine output path: Component.html.jsx → Component.jsx
+    if target == 'web':
+        output_path = _web_output_path(jsx_path)
+    else:
+        output_path = os.path.join(
+            os.path.dirname(jsx_path),
+            _component_name(jsx_path) + '.jsx'
+        )
+
+    with open(output_path, 'w') as f:
+        f.write(output)
+
+    print(f"Built [{target}]  {jsx_path}  →  {output_path}")
 
 
 def build_pyx(pyx_path: str, output_path: str | None = None, target: str = 'native') -> None:
@@ -345,25 +432,37 @@ def build_pyx(pyx_path: str, output_path: str | None = None, target: str = 'nati
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build .pyx components")
-    parser.add_argument('files', nargs='*', help='.pyx files to build (default: all)')
+    parser = argparse.ArgumentParser(description="Build .pyx and .html.jsx components")
+    parser.add_argument('files', nargs='*', help='source files to build (default: all)')
     parser.add_argument('--target', choices=['native', 'web'], default='native')
     args = parser.parse_args()
 
     target = args.target
 
     if args.files:
-        for pyx in args.files:
-            build_pyx(pyx, target=target)
+        for f in args.files:
+            if f.endswith('.html.jsx'):
+                build_jsx(f, target=target)
+            else:
+                build_pyx(f, target=target)
     else:
         root = os.path.join(os.path.dirname(__file__), "..", "components")
-        pyx_files = []
+        pyx_files, jsx_files = [], []
         for dirpath, _, filenames in os.walk(root):
             for name in filenames:
-                if name.endswith(".pyx"):
-                    pyx_files.append(os.path.join(dirpath, name))
-        if not pyx_files:
-            print("No .pyx files found.", file=sys.stderr)
+                full = os.path.join(dirpath, name)
+                if name.endswith('.pyx'):
+                    pyx_files.append(full)
+                elif name.endswith('.html.jsx'):
+                    jsx_files.append(full)
+
+        if not pyx_files and not jsx_files:
+            print("No .pyx or .html.jsx files found.", file=sys.stderr)
             sys.exit(0)
+
+        # Pass 1: Python sources
         for pyx in pyx_files:
             build_pyx(pyx, target=target)
+        # Pass 2: hand-written JSX sources
+        for jsx in jsx_files:
+            build_jsx(jsx, target=target)

@@ -12,8 +12,8 @@
     "build:pyx": "python3 scripts/build_pyx.py",
     "build:pyx:web": "python3 scripts/build_pyx.py --target web",
     "build:pyx:all": "npm run build:pyx && npm run build:pyx:web",
-    "watch:pyx": "chokidar \"components/**/*.pyx\" -c \"python3 scripts/build_pyx.py {path}\"",
-    "watch:pyx:web": "chokidar \"components/**/*.pyx\" -c \"python3 scripts/build_pyx.py --target web {path}\"",
+    "watch:pyx": "chokidar \"components/**/*.pyx\" \"components/**/*.html.jsx\" -c \"python3 scripts/build_pyx.py {path}\"",
+    "watch:pyx:web": "chokidar \"components/**/*.pyx\" \"components/**/*.html.jsx\" -c \"python3 scripts/build_pyx.py --target web {path}\"",
     "watch:pyx:all": "concurrently \"npm run watch:pyx\" \"npm run watch:pyx:web\"",
     "setup:pyx": "pip install transcrypt",
     "setup:web": "cd web && npm install"

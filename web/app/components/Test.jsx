@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react'
+import TestReact from './TestReact'
 
 var Hello = function () {
 	return 'Hello';
@@ -14,11 +15,15 @@ var Test = function (props) {
             <h1 className="text-white text-2xl font-bold tracking-tight">
                {count} Hello d2 from Pyth don 112212! {(f ? Hello () : '')}
             </h1>
+    
             <p className="text-indigo-400 text-sm mt-2" onClick={(function __lambda__ () {
 	return setCount (count + 1);
 })}>
-                Built via .pyx → Transcrypt → JSX reinsertion
+                Built via .pyx → Transcrypt → JSX reinsertion   
+            <TestReact></TestReact>
+        
             </p>
+            
         </div>
 );
 };

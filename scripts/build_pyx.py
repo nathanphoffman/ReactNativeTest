@@ -4,7 +4,7 @@ Build pipeline for .pyx (Python + JSX) React Native components.
 
 Workflow:
   1. Parse # !js-import: and # !js-export: directives
-  2. Extract jsx(\"\"\"...\"\"\") blocks → string placeholders
+  2. Extract <jsx>...</jsx> blocks → string placeholders (with nesting guard)
   3. Run Transcrypt on the resulting valid-Python source
   4. Strip Transcrypt boilerplate from output JS
   5. Re-inject JSX where the placeholders were
@@ -39,16 +39,26 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
 
     source = "\n".join(clean_lines)
 
-    # --- 2. Extract jsx("""...""") / jsx('''...''') blocks ---
+    # --- 2. Extract <jsx>...</jsx> blocks ---
     jsx_blocks: list[str] = []
+    pattern = re.compile(r'<jsx>(.*?)</jsx>', re.DOTALL)
+
+    # Nesting guard: a <jsx> inside another <jsx> is always a mistake
+    for m in pattern.finditer(source):
+        if '<jsx>' in m.group(1):
+            print(
+                f"Error in {pyx_path}: Cannot nest <jsx> inside <jsx>. "
+                "<jsx> must be on the outside.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     def store_jsx(m: re.Match) -> str:
         idx = len(jsx_blocks)
         jsx_blocks.append(m.group(1))
         return f'"__PYX_JSX_{idx}__"'
 
-    source = re.sub(r'jsx\("""(.*?)"""\)', store_jsx, source, flags=re.DOTALL)
-    source = re.sub(r"jsx\('''(.*?)'''\)", store_jsx, source, flags=re.DOTALL)
+    source = pattern.sub(store_jsx, source)
 
     # --- 3. Write to a temp dir and run Transcrypt ---
     component_name = os.path.splitext(os.path.basename(pyx_path))[0]
@@ -91,9 +101,6 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
     js = re.sub(r"^\s*'use strict';\s*\n", "", js, flags=re.MULTILINE)
     # var __name__ = '...'; lines
     js = re.sub(r"^\s*var __name__\s*=.*?;\s*\n", "", js, flags=re.MULTILINE)
-    # Remove jsx stub: export var jsx = function (markup) { return markup; };
-    # Match: function body with no nested braces (safe for simple stubs)
-    js = re.sub(r"export var jsx\s*=\s*function\s*[^{]*\{[^}]*\};\s*\n?", "", js)
     # Transcrypt emits `export var Foo = function`; strip the `export` keyword
     # since we append an explicit export directive ourselves
     js = re.sub(r"^export (var \w+ = function)", r"\1", js, flags=re.MULTILINE)
@@ -105,9 +112,6 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
         content = jsx_blocks[idx].strip()
         return f"(\n{content}\n)"
 
-    # Handle: jsx ('__PYX_JSX_N__')  or  jsx("__PYX_JSX_N__")
-    js = re.sub(r'jsx\s*\(\s*[\'"]__PYX_JSX_(\d+)__[\'"]\s*\)', reinsert, js)
-    # Fallback: bare placeholder string in case Transcrypt inlined/optimised the call
     js = re.sub(r'[\'"]__PYX_JSX_(\d+)__[\'"]', reinsert, js)
 
     # --- 6. Assemble final file ---

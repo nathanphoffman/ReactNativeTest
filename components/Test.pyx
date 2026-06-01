@@ -1,18 +1,22 @@
 # !js-import: import React from 'react'
-# !js-import: import { View, Text } from 'react-native'
+# !js-import: import { Div, H1, P } from './html'
 
 
+def Hello():
+    return "Hello"
+
+f = False
+
+@export_default
 def Test(props):
     return <jsx>
-        <View style={{ flex: 1, backgroundColor: '#030712', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold' }}>
-                Hello from Python 2232352!
-            </Text>
-            <Text style={{ color: '#818cf8', fontSize: 14, marginTop: 8 }}>
+        <Div className="flex-1 bg-gray-950 items-center justify-center px-6">
+            <H1 className="text-white text-2xl font-bold tracking-tight">
+                Hello from Python 112212! {Hello() if f else ""}
+            </H1>
+            <P className="text-indigo-400 text-sm mt-2">
                 Built via .pyx → Transcrypt → JSX reinsertion
-            </Text>
-        </View>
+            </P>
+        </Div>
     </jsx>
 
-
-# !js-export: export default Test

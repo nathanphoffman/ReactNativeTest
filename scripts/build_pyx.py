@@ -28,14 +28,27 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
     js_export = ""
     clean_lines: list[str] = []
 
-    for line in source.splitlines():
-        stripped = line.strip()
+    lines = source.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
         if stripped.startswith("# !js-import:"):
             js_imports.append(stripped[len("# !js-import:"):].strip())
         elif stripped.startswith("# !js-export:"):
             js_export = stripped[len("# !js-export:"):].strip()
+        elif stripped == "@export_default":
+            # Look ahead for the def line to extract the function name
+            j = i + 1
+            while j < len(lines) and not lines[j].strip().startswith("def "):
+                j += 1
+            if j < len(lines):
+                m = re.match(r"\s*def\s+(\w+)\s*\(", lines[j])
+                if m:
+                    js_export = f"export default {m.group(1)}"
+            # Decorator line is consumed — don't add to clean_lines
         else:
-            clean_lines.append(line)
+            clean_lines.append(lines[i])
+        i += 1
 
     source = "\n".join(clean_lines)
 

@@ -20,6 +20,51 @@ import subprocess
 import tempfile
 
 
+def _discover_html_components(pyx_path: str) -> dict[str, str]:
+    """Scan the html/ sibling directory and return {lowercase_name: ComponentName}."""
+    html_dir = os.path.join(os.path.dirname(os.path.abspath(pyx_path)), 'html')
+    if not os.path.isdir(html_dir):
+        return {}
+    mapping: dict[str, str] = {}
+    for fname in os.listdir(html_dir):
+        stem, ext = os.path.splitext(fname)
+        if ext in ('.tsx', '.ts', '.jsx', '.js') and stem != 'index':
+            mapping[stem.lower()] = stem
+    return mapping
+
+
+def _auto_capitalize(
+    jsx_blocks: list[str], html_map: dict[str, str], pyx_path: str
+) -> tuple[list[str], str | None]:
+    """
+    Capitalize all lowercase JSX tag names. For tags found in html_map, track
+    them for auto-import. Returns (updated_blocks, import_line_or_None).
+    """
+    used: set[str] = set()
+    tag_re = re.compile(r'<(/?)([a-z][a-z0-9]*)(\s|>|/>)')
+
+    def replace_tag(m: re.Match) -> str:
+        slash, name, after = m.group(1), m.group(2), m.group(3)
+        capitalized = name[0].upper() + name[1:]
+        if name in html_map:
+            used.add(html_map[name])   # html_map already keyed by lowercase
+        return f'<{slash}{capitalized}{after}'
+
+    updated = [tag_re.sub(replace_tag, block) for block in jsx_blocks]
+
+    if not used:
+        return updated, None
+
+    from_dir = os.path.dirname(os.path.abspath(pyx_path))
+    html_dir = os.path.join(from_dir, 'html')
+    rel = os.path.relpath(html_dir, from_dir).replace(os.sep, '/')
+    if not rel.startswith('.'):
+        rel = './' + rel
+
+    import_line = f"import {{ {', '.join(sorted(used))} }} from '{rel}'"
+    return updated, import_line
+
+
 def _find_jsx_exprs(block: str):
     """Yield (start, end, content) for each top-level {…} in a JSX block."""
     depth = 0
@@ -70,10 +115,28 @@ def _compile_jsx_exprs(jsx_blocks: list[str], pyx_path: str) -> list[str]:
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-    # Extract compiled RHS values: var __pyx_jexpr_N__ = <rhs>;
+    # Extract compiled RHS values using brace-depth tracking so that function
+    # bodies like `function () {return x;}` are captured in full, not cut at
+    # the first semicolon inside the body.
     compiled: dict[int, str] = {}
-    for m in re.finditer(r'var __pyx_jexpr_(\d+)__\s*=\s*(.*?);', js_out, re.DOTALL):
-        compiled[int(m.group(1))] = m.group(2).strip()
+    for idx in range(len(candidates)):
+        marker = f'var __pyx_jexpr_{idx}__'
+        pos = js_out.find(marker)
+        if pos == -1:
+            continue
+        eq = js_out.index('=', pos) + 1
+        depth = 0
+        i = eq
+        while i < len(js_out):
+            ch = js_out[i]
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+            elif ch == ';' and depth == 0:
+                compiled[idx] = js_out[eq:i].strip()
+                break
+            i += 1
 
     # Substitute back — process each block's replacements in reverse offset order
     jsx_blocks = list(jsx_blocks)
@@ -144,6 +207,13 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
         return f'"__PYX_JSX_{idx}__"'
 
     source = pattern.sub(store_jsx, source)
+
+    # --- 2a. Auto-capitalize html tags + inject ./html import ---
+    html_map = _discover_html_components(pyx_path)
+    jsx_blocks, html_import = _auto_capitalize(jsx_blocks, html_map, pyx_path)
+    if html_import:
+        js_imports = [l for l in js_imports if "'./html'" not in l and '"./html"' not in l]
+        js_imports.append(html_import)
 
     # --- 2b. Compile Python expressions inside JSX {} through Transcrypt ---
     jsx_blocks = _compile_jsx_exprs(jsx_blocks, pyx_path)

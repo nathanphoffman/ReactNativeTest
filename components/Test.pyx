@@ -1,5 +1,5 @@
-# !js-import: import React from 'react'
-# !js-import: import { Div, H1, P } from './html'
+# !js-import: import { useState } from 'react'
+
 
 
 def Hello():
@@ -9,14 +9,17 @@ f = True
 
 @export_default
 def Test(props):
-    return <jsx>
-        <Div className="flex-1 bg-gray-950 items-center justify-center px-6">
-            <H1 className="text-white text-2xl font-bold tracking-tight">
-                Hello 2 from Python 112212! {Hello() if f else ""}
-            </H1>
-            <P className="text-indigo-400 text-sm mt-2">
-                Built via .pyx → Transcrypt → JSX reinsertion
-            </P>
-        </Div>
-    </jsx>
 
+    count, setCount = useState(0)
+
+
+    return <jsx>
+        <div className="flex-1 bg-gray-950 items-center justify-center px-6">
+            <h1 className="text-white text-2xl font-bold tracking-tight">
+               {count} Hello d2 from Pyth don 112212! {Hello() if f else ""}
+            </h1>
+            <p className="text-indigo-400 text-sm mt-2" onPress={lambda: setCount(count + 1)}>
+                Built via .pyx → Transcrypt → JSX reinsertion
+            </p>
+        </div>
+    </jsx>

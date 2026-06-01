@@ -1,6 +1,6 @@
 import { TextInput, TextInputProps } from "react-native";
 
-export interface InputProps extends TextInputProps {
+export interface InputProps extends Omit<TextInputProps, 'onChange'> {
   className?: string;
   onChange?: (e: { target: { value: string } }) => void;
 }

@@ -1,5 +1,5 @@
-import * as fs   from 'fs'
-import * as os   from 'os'
+import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import { spawnSync } from 'child_process'
 
@@ -16,7 +16,7 @@ export function runTranscrypt(pythonSource: string, componentName: string): stri
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'pyx_transcrypt_'))
 
   try {
-    const inputFile  = path.join(temporaryDirectory, `${componentName}.py`)
+    const inputFile = path.join(temporaryDirectory, `${componentName}.py`)
     const outputFile = path.join(temporaryDirectory, '__target__', `${componentName}.js`)
 
     fs.writeFileSync(inputFile, pythonSource)
@@ -48,14 +48,14 @@ export function runTranscrypt(pythonSource: string, componentName: string): stri
  * Used to compile Python expressions found inside JSX {} blocks.
  */
 export function runTranscryptBatch(
-  pythonLines:  string[],
+  pythonLines: string[],
   batchFileName: string,
-  sourcePath:   string
+  sourcePath: string
 ): string | null {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'pyx_jexpr_'))
 
   try {
-    const inputFile  = path.join(temporaryDirectory, `${batchFileName}.py`)
+    const inputFile = path.join(temporaryDirectory, `${batchFileName}.py`)
     const outputFile = path.join(temporaryDirectory, '__target__', `${batchFileName}.js`)
 
     fs.writeFileSync(inputFile, pythonLines.join('\n'))

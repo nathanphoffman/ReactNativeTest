@@ -28,9 +28,9 @@ export interface AutoCapitalizeResult {
  * Only runs for the native target — web output keeps lowercase HTML elements.
  */
 export function autoCapitalizeHtmlElements(
-  blocks:             string[],
-  htmlComponentMap:   Record<string, string>,
-  sourcePath:         string
+  blocks: string[],
+  htmlComponentMap: Record<string, string>,
+  sourcePath: string
 ): AutoCapitalizeResult {
   const usedHtmlComponents = new Set<string>()
 
@@ -52,8 +52,8 @@ export function autoCapitalizeHtmlElements(
 
   // Build a relative path from the source file's directory to the html/ folder
   const sourceDirectory = path.dirname(path.resolve(sourcePath))
-  const htmlDirectory   = path.join(sourceDirectory, 'html')
-  let relativeHtmlPath  = path.relative(sourceDirectory, htmlDirectory).replace(/\\/g, '/')
+  const htmlDirectory = path.join(sourceDirectory, 'html')
+  let relativeHtmlPath = path.relative(sourceDirectory, htmlDirectory).replace(/\\/g, '/')
 
   if (!relativeHtmlPath.startsWith('.')) {
     relativeHtmlPath = './' + relativeHtmlPath

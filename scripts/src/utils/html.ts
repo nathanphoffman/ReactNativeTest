@@ -1,4 +1,4 @@
-import * as fs   from 'fs'
+import * as fs from 'fs'
 import * as path from 'path'
 
 
@@ -20,7 +20,7 @@ export function discoverHtmlComponents(sourcePath: string): Record<string, strin
   for (const filename of fs.readdirSync(htmlDirectory)) {
     const { name: componentStem, ext } = path.parse(filename)
     const isComponentFile = ['.tsx', '.ts', '.jsx', '.js'].includes(ext)
-    const isNotIndexFile  = componentStem !== 'index'
+    const isNotIndexFile = componentStem !== 'index'
 
     if (isComponentFile && isNotIndexFile) {
       componentMap[componentStem.toLowerCase()] = componentStem

@@ -1,6 +1,5 @@
-import * as fs   from 'fs'
+import * as fs from 'fs'
 import * as path from 'path'
-
 
 export interface SourceFiles {
   /** .pyx files — Python + JSX sources processed by Transcrypt (pass 1) */
@@ -10,13 +9,12 @@ export interface SourceFiles {
   handwrittenJsxSources: string[]
 }
 
-
 /**
  * Recursively walk a directory tree and collect all .pyx and .html.jsx
  * source files, separating them by type for the two-pass build.
  */
 export function collectSourceFiles(rootDirectory: string): SourceFiles {
-  const pythonSources:       string[] = []
+  const pythonSources: string[] = []
   const handwrittenJsxSources: string[] = []
 
   function walkDirectory(directory: string): void {

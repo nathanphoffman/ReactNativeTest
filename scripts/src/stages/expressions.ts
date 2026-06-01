@@ -4,8 +4,8 @@ import { runTranscryptBatch } from './transcrypt'
 interface JsxExpression {
   blockIndex: number
   startOffset: number
-  endOffset:   number
-  pythonExpr:  string
+  endOffset: number
+  pythonExpr: string
 }
 
 
@@ -64,7 +64,7 @@ function extractCompiledRightHandSide(transcryptOutput: string, expressionIndex:
   for (let charIndex = assignmentStart; charIndex < transcryptOutput.length; charIndex++) {
     const char = transcryptOutput[charIndex]
 
-    if      (char === '{') braceDepth++
+    if (char === '{') braceDepth++
     else if (char === '}') braceDepth--
     else if (char === ';' && braceDepth === 0) {
       return transcryptOutput.slice(assignmentStart, charIndex).trim()

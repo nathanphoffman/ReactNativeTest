@@ -10,7 +10,7 @@ export function stripMatchingJsxAttributes(block: string, namePattern: RegExp): 
     'g'
   )
 
-  let output    = ''
+  let output = ''
   let scanIndex = 0
 
   while (scanIndex < block.length) {
@@ -29,10 +29,10 @@ export function stripMatchingJsxAttributes(block: string, namePattern: RegExp): 
       // The value is a JSX expression — scan forward using brace depth
       // to consume the entire {…} value including any nested braces
       let scanPosition = match.index + match[0].length
-      let braceDepth   = 1
+      let braceDepth = 1
 
       while (scanPosition < block.length && braceDepth > 0) {
-        if      (block[scanPosition] === '{') braceDepth++
+        if (block[scanPosition] === '{') braceDepth++
         else if (block[scanPosition] === '}') braceDepth--
         scanPosition++
       }

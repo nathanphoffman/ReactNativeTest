@@ -32,9 +32,9 @@ export interface ParsedDirectives {
  *   @export_default (decorator)        Looks ahead for `def Name(` and sets jsExport
  */
 export function parseDirectives(source: string): ParsedDirectives {
-  const jsImports:      string[] = []
+  const jsImports: string[] = []
   const nextDirectives: string[] = []
-  const cleanLines:     string[] = []
+  const cleanLines: string[] = []
   let jsExport = ''
 
   const lines = source.split('\n')

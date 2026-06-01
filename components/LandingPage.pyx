@@ -11,7 +11,7 @@ def LandingPage(props):
 
             <header className="w-full border-b border-gray-800">
                 <nav className="max-w-5xl mx-auto px-6 py-5 flex flex-row justify-between items-center">
-                    <span className="text-indigo-400 font-bold text-xl tracking-tight">nate.dev</span>
+                    <span className="text-indigo-400 font-bold text-xl tracking-tight">nathanhoffman.me</span>
                     <div className="flex flex-row gap-6">
                         <a href="#about" className="text-gray-400 text-sm font-medium">About</a>
                         <a href="#skills" className="text-gray-400 text-sm font-medium">Skills</a>
@@ -25,7 +25,7 @@ def LandingPage(props):
                     Nate Hoffman
                 </h1>
                 <h2 className="text-indigo-400 text-xl font-medium mt-3">
-                    Software Engineer
+                    Programmer by day, astronomer by night
                 </h2>
                 <p className="text-gray-400 text-base leading-relaxed mt-5 max-w-lg">
                     Building cross-platform apps with React Native and Next.js,

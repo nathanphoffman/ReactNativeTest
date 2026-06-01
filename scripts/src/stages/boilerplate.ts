@@ -11,12 +11,12 @@
  */
 export function stripTranscryptBoilerplate(compiledJs: string): string {
   return compiledJs
-    .replace(/^\/\/\s*Transcrypt.*?\n/gm,                                              '')
-    .replace(/^import\s*\{[^}]+\}\s*from\s*['"][^'"]*__runtime__[^'"]*['"];\s*\n/gm,  '')
-    .replace(/^\/\/# sourceMappingURL=.*\n?/gm,                                        '')
-    .replace(/^\s*'use strict';\s*\n/gm,                                               '')
-    .replace(/^\s*var __name__\s*=.*?;\s*\n/gm,                                        '')
-    .replace(/^export (var \w+)/gm,                                                    '$1')
+    .replace(/^\/\/\s*Transcrypt.*?\n/gm, '')
+    .replace(/^import\s*\{[^}]+\}\s*from\s*['"][^'"]*__runtime__[^'"]*['"];\s*\n/gm, '')
+    .replace(/^\/\/# sourceMappingURL=.*\n?/gm, '')
+    .replace(/^\s*'use strict';\s*\n/gm, '')
+    .replace(/^\s*var __name__\s*=.*?;\s*\n/gm, '')
+    .replace(/^export (var \w+)/gm, '$1')
     .trim()
 }
 

@@ -1,70 +1,72 @@
 #!/usr/bin/env node
 /**
- * CLI entry point for the .pyx / .html.jsx build pipeline.
+ * CLI entry point for the .pyx / .html.jsx component build pipeline.
  *
  * Usage:
- *   tsx src/cli.ts                        # build all components, native target
- *   tsx src/cli.ts --target web           # build all, web target
- *   tsx src/cli.ts components/Foo.pyx     # build one file
- *   tsx src/cli.ts components/Bar.html.jsx --target web
+ *   tsx src/cli.ts                             Build all components, native target
+ *   tsx src/cli.ts --target web                Build all components, web target
+ *   tsx src/cli.ts components/Foo.pyx          Build one .pyx file
+ *   tsx src/cli.ts components/Bar.html.jsx     Build one .html.jsx file
+ *   tsx src/cli.ts [file] --target web         Build one file for web target
  */
 
-import * as fs from 'fs'
 import * as path from 'path'
-import { buildPyx } from './builders/pyx'
-import { buildJsx } from './builders/jsx'
+import { buildPyx }            from './builders/pyx'
+import { buildJsx }            from './builders/jsx'
+import { collectSourceFiles }  from './utils/scanner'
+import { BuildTarget }         from './utils/types'
 
-// --- Argument parsing ---
+
+// ── Parse arguments ──────────────────────────────────────────────────────────
+
 const argv = process.argv.slice(2)
-const targetIdx = argv.indexOf('--target')
-const target = targetIdx !== -1 ? argv[targetIdx + 1] : 'native'
+
+const targetFlagIndex = argv.indexOf('--target')
+const target          = (targetFlagIndex !== -1 ? argv[targetFlagIndex + 1] : 'native') as BuildTarget
 
 if (target !== 'native' && target !== 'web') {
-  console.error(`Invalid target "${target}". Must be "native" or "web".`)
+  console.error(`Invalid --target "${target}". Must be "native" or "web".`)
   process.exit(1)
 }
 
-const files = argv.filter((a, i) => !a.startsWith('--') && i !== targetIdx + 1)
+// Everything that isn't a flag or the value after --target is a file path
+const explicitFiles = argv.filter(
+  (arg, index) => !arg.startsWith('--') && index !== targetFlagIndex + 1
+)
 
-// --- Build ---
-if (files.length > 0) {
-  // Build specific files
-  for (const f of files) {
-    if (f.endsWith('.html.jsx')) {
-      buildJsx(f, target)
+
+// ── Build ─────────────────────────────────────────────────────────────────────
+
+if (explicitFiles.length > 0) {
+
+  // Build only the files explicitly named on the command line
+  for (const filePath of explicitFiles) {
+    if (filePath.endsWith('.html.jsx')) {
+      buildJsx(filePath, target)
     } else {
-      buildPyx(f, target)
+      buildPyx(filePath, target)
     }
   }
+
 } else {
-  // Scan components/ for all source files
+
+  // No files specified — scan components/ and build everything
   const componentsRoot = path.join(__dirname, '..', '..', 'components')
-  const pyxFiles: string[] = []
-  const jsxFiles: string[] = []
+  const { pythonSources, handwrittenJsxSources } = collectSourceFiles(componentsRoot)
 
-  function walk(dir: string): void {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        walk(full)
-      } else if (entry.name.endsWith('.pyx')) {
-        pyxFiles.push(full)
-      } else if (entry.name.endsWith('.html.jsx')) {
-        jsxFiles.push(full)
-      }
-    }
-  }
-
-  walk(componentsRoot)
-
-  if (pyxFiles.length === 0 && jsxFiles.length === 0) {
-    console.error('No .pyx or .html.jsx files found.')
+  if (pythonSources.length === 0 && handwrittenJsxSources.length === 0) {
+    console.error('No .pyx or .html.jsx source files found.')
     process.exit(0)
   }
 
-  // Pass 1: Python sources (.pyx → .jsx via Transcrypt)
-  for (const f of pyxFiles) buildPyx(f, target)
+  // Pass 1: Python sources (.pyx → .jsx via Transcrypt pipeline)
+  for (const sourcePath of pythonSources) {
+    buildPyx(sourcePath, target)
+  }
 
-  // Pass 2: hand-written JSX sources (.html.jsx → .jsx)
-  for (const f of jsxFiles) buildJsx(f, target)
+  // Pass 2: Hand-written JSX sources (.html.jsx → .jsx)
+  for (const sourcePath of handwrittenJsxSources) {
+    buildJsx(sourcePath, target)
+  }
+
 }

@@ -1,104 +1,144 @@
-import * as fs from 'fs'
-import * as os from 'os'
+import * as fs   from 'fs'
 import * as path from 'path'
-import { spawnSync } from 'child_process'
 
-import { parseDirectives } from '../stages/directives'
-import { extractJsxBlocks } from '../stages/jsxExtract'
-import { autoCapitalize } from '../stages/capitalize'
-import { compileJsxExprs } from '../stages/expressions'
-import { transformProps } from '../stages/props'
-import { stripTranscryptBoilerplate, reinjectJsx } from '../stages/boilerplate'
-import { discoverHtmlComponents } from '../utils/html'
-import { componentName, webOutputPath } from '../utils/paths'
+import { parseDirectives }                       from '../stages/directives'
+import { extractJsxBlocks }                      from '../stages/jsxExtract'
+import { autoCapitalizeHtmlElements }            from '../stages/capitalize'
+import { compilePythonExpressionsInJsxBlocks }   from '../stages/expressions'
+import { transformPlatformSpecificProps }         from '../stages/props'
+import { stripTranscryptBoilerplate,
+         reinjectJsxBlocksIntoCompiledJs }        from '../stages/boilerplate'
+import { runTranscrypt }                          from '../stages/transcrypt'
+import { discoverHtmlComponents }                from '../utils/html'
+import { componentName, webOutputPath }          from '../utils/paths'
+import { BuildTarget }                           from '../utils/types'
+
 
 /**
- * Build a .pyx (Python + JSX) source file into a .jsx component.
+ * Build a .pyx (Python + JSX) source file into a .jsx React component.
  *
- * Pipeline:
- *   1. Parse directives (# !js-import:, @export_default, # !next:)
- *   2. Extract <jsx>…</jsx> blocks → placeholders
- *   2a. Auto-capitalize html tags + inject ./html import  [native only]
- *   2b. Batch-compile Python expressions in JSX {} through Transcrypt
- *   2c. Transform rn: props
- *   3. Run Transcrypt on the clean Python source
- *   4. Strip Transcrypt boilerplate
- *   5. Re-inject JSX blocks
- *   6. Assemble final file
+ * The pipeline runs in six stages:
+ *
+ *   1. Parse directives
+ *      Strip # !js-import:, @export_default, and # !next: lines from the
+ *      Python source and collect them for use in the output file header/footer.
+ *
+ *   2. Extract JSX blocks
+ *      Replace every <jsx>…</jsx> block with a string placeholder so the
+ *      remaining Python is valid and Transcrypt can process it cleanly.
+ *
+ *   2a. Auto-capitalize html elements  [native target only]
+ *      Convert lowercase tag names (<div>, <h1>) to their React Native
+ *      component equivalents (<Div>, <H1>) and generate the ./html import.
+ *
+ *   2b. Compile Python expressions in JSX {}
+ *      Find every {…} expression inside JSX blocks, run them through
+ *      Transcrypt in a batch, and substitute the compiled JS back in.
+ *
+ *   2c. Transform platform-specific props
+ *      For native: strip the rn: prefix (rn:onPress → onPress).
+ *      For web:    remove rn: attributes entirely.
+ *
+ *   3. Run Transcrypt
+ *      Compile the clean Python source to JavaScript.
+ *
+ *   4. Strip boilerplate
+ *      Remove Transcrypt's runtime import, header comment, and other noise.
+ *
+ *   5. Re-inject JSX
+ *      Replace the string placeholders with the original JSX block content.
+ *
+ *   6. Assemble and write
+ *      Prepend imports, append the export, write the final .jsx file.
  */
-export function buildPyx(pyxPath: string, target: string, outputPath?: string): void {
-  const source = fs.readFileSync(pyxPath, 'utf8')
+export function buildPyx(
+  pyxPath:     string,
+  target:      BuildTarget,
+  outputPath?: string
+): void {
+  const sourceContent = fs.readFileSync(pyxPath, 'utf8')
 
-  // 1. Directives
-  const { jsImports, jsExport, nextDirectives, cleanSource } = parseDirectives(source)
 
-  // 2. JSX extraction
-  const { source: pySource, blocks: jsxBlocks } = extractJsxBlocks(cleanSource, pyxPath)
-  let blocks = jsxBlocks
-  let imports = [...jsImports]
+  // ── Stage 1: Parse directives ─────────────────────────────────────────────
 
-  // 2a. Auto-capitalize [native only]
+  const {
+    jsImports,
+    jsExport,
+    nextDirectives,
+    cleanSource,
+  } = parseDirectives(sourceContent)
+
+
+  // ── Stage 2: Extract JSX blocks ───────────────────────────────────────────
+
+  const { source: pythonSource, jsxBlocks } = extractJsxBlocks(cleanSource, pyxPath)
+
+  let processedBlocks = jsxBlocks
+  let importStatements = [...jsImports]
+
+
+  // ── Stage 2a: Auto-capitalize html elements (native only) ─────────────────
+
   if (target === 'native') {
-    const htmlMap = discoverHtmlComponents(pyxPath)
-    const { blocks: capitalized, importLine } = autoCapitalize(blocks, htmlMap, pyxPath)
-    blocks = capitalized
-    if (importLine) {
-      imports = imports.filter(l => !l.includes('./html'))
-      imports.push(importLine)
-    }
-  }
-
-  // 2b. Compile Python expressions in JSX {}
-  blocks = compileJsxExprs(blocks, pyxPath)
-
-  // 2c. Platform prop transforms
-  blocks = transformProps(blocks, target)
-
-  // 3. Run Transcrypt
-  const name = componentName(pyxPath)
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pyx_build_'))
-  let js: string
-
-  try {
-    const tmpPy = path.join(tmpDir, `${name}.py`)
-    fs.writeFileSync(tmpPy, pySource)
-
-    const result = spawnSync(
-      'python3',
-      ['-m', 'transcrypt', '--nomin', '--esv', '6', `${name}.py`],
-      { cwd: tmpDir, encoding: 'utf8' }
+    const htmlComponentMap = discoverHtmlComponents(pyxPath)
+    const { blocks: capitalized, importLine } = autoCapitalizeHtmlElements(
+      processedBlocks,
+      htmlComponentMap,
+      pyxPath
     )
 
-    if (result.status !== 0) {
-      console.error('Transcrypt stderr:\n', result.stderr)
-      console.error('Transcrypt stdout:\n', result.stdout)
-      process.exit(1)
-    }
+    processedBlocks = capitalized
 
-    js = fs.readFileSync(path.join(tmpDir, '__target__', `${name}.js`), 'utf8')
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true })
+    if (importLine) {
+      importStatements = importStatements.filter(line => !line.includes('./html'))
+      importStatements.push(importLine)
+    }
   }
 
-  // 4. Strip boilerplate
-  js = stripTranscryptBoilerplate(js)
 
-  // 5. Re-inject JSX
-  js = reinjectJsx(js, blocks)
+  // ── Stage 2b: Compile Python expressions in JSX {} ────────────────────────
 
-  // 6. Assemble
-  const prefix = target === 'web'
-    ? nextDirectives.map(d => `'${d}';\n`).join('')
+  processedBlocks = compilePythonExpressionsInJsxBlocks(processedBlocks, pyxPath)
+
+
+  // ── Stage 2c: Transform platform-specific props ───────────────────────────
+
+  processedBlocks = transformPlatformSpecificProps(processedBlocks, target)
+
+
+  // ── Stage 3: Run Transcrypt ───────────────────────────────────────────────
+
+  const name = componentName(pyxPath)
+  let compiledJs = runTranscrypt(pythonSource, name)
+
+
+  // ── Stage 4: Strip boilerplate ────────────────────────────────────────────
+
+  compiledJs = stripTranscryptBoilerplate(compiledJs)
+
+
+  // ── Stage 5: Re-inject JSX blocks ─────────────────────────────────────────
+
+  compiledJs = reinjectJsxBlocksIntoCompiledJs(compiledJs, processedBlocks)
+
+
+  // ── Stage 6: Assemble and write ───────────────────────────────────────────
+
+  const nextJsPrefix = target === 'web'
+    ? nextDirectives.map(directive => `'${directive}';\n`).join('')
     : ''
 
-  const parts = [imports.join('\n'), '', js]
-  if (jsExport) parts.push('', jsExport)
-  const output = prefix + parts.join('\n') + '\n'
+  const outputParts = [importStatements.join('\n'), '', compiledJs]
+  if (jsExport) outputParts.push('', jsExport)
 
-  const dest = outputPath ?? (
-    target === 'web' ? webOutputPath(pyxPath) : path.join(path.dirname(pyxPath), name + '.jsx')
+  const finalOutput = nextJsPrefix + outputParts.join('\n') + '\n'
+
+  const destinationPath = outputPath ?? (
+    target === 'web'
+      ? webOutputPath(pyxPath)
+      : path.join(path.dirname(pyxPath), name + '.jsx')
   )
 
-  fs.writeFileSync(dest, output)
-  console.log(`Built [${target}]  ${pyxPath}  →  ${dest}`)
+  fs.writeFileSync(destinationPath, finalOutput)
+  console.log(`Built [${target}]  ${pyxPath}  →  ${destinationPath}`)
 }

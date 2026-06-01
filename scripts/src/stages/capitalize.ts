@@ -1,38 +1,66 @@
 import * as path from 'path'
 
-export interface CapitalizeResult {
+
+export interface AutoCapitalizeResult {
+  /** The JSX blocks with all lowercase tag names capitalized. */
   blocks: string[]
-  /** Import line to inject, or null if no html components were used. */
+
+  /**
+   * The import line to inject for html wrapper components, or null if
+   * no html/ components were used.
+   *
+   * Example: "import { Button, Div, H1 } from './html'"
+   */
   importLine: string | null
 }
 
-/**
- * Capitalize all lowercase JSX tag names across the given blocks.
- * Tracks which names exist in htmlMap for auto-import generation.
- * Only runs for native target — web keeps lowercase native HTML elements.
- */
-export function autoCapitalize(
-  blocks: string[],
-  htmlMap: Record<string, string>,
-  srcPath: string
-): CapitalizeResult {
-  const used = new Set<string>()
 
-  const updated = blocks.map(block =>
-    block.replace(/<(\/?)([a-z][a-z0-9]*)(\s|>|\/>)/g, (_, slash, name, after) => {
-      const capitalized = name[0].toUpperCase() + name.slice(1)
-      if (name in htmlMap) used.add(htmlMap[name])
-      return `<${slash}${capitalized}${after}`
+/**
+ * Capitalize all lowercase JSX element names across the given blocks.
+ *
+ * React Native requires component names to start with an uppercase letter.
+ * This transform handles the conversion automatically so authors can write
+ * natural lowercase HTML tags (<div>, <h1>, <button>) in .pyx files.
+ *
+ * Also tracks which capitalized names exist in htmlComponentMap so an
+ * auto-import line can be generated for them.
+ *
+ * Only runs for the native target — web output keeps lowercase HTML elements.
+ */
+export function autoCapitalizeHtmlElements(
+  blocks:             string[],
+  htmlComponentMap:   Record<string, string>,
+  sourcePath:         string
+): AutoCapitalizeResult {
+  const usedHtmlComponents = new Set<string>()
+
+  const capitalizedBlocks = blocks.map(block =>
+    block.replace(/<(\/?)([a-z][a-z0-9]*)(\s|>|\/>)/g, (_, slash, tagName, trailingChar) => {
+      const capitalizedName = tagName[0].toUpperCase() + tagName.slice(1)
+
+      if (tagName in htmlComponentMap) {
+        usedHtmlComponents.add(htmlComponentMap[tagName])
+      }
+
+      return `<${slash}${capitalizedName}${trailingChar}`
     })
   )
 
-  if (used.size === 0) return { blocks: updated, importLine: null }
+  if (usedHtmlComponents.size === 0) {
+    return { blocks: capitalizedBlocks, importLine: null }
+  }
 
-  const fromDir = path.dirname(path.resolve(srcPath))
-  const htmlDir = path.join(fromDir, 'html')
-  let rel = path.relative(fromDir, htmlDir).replace(/\\/g, '/')
-  if (!rel.startsWith('.')) rel = './' + rel
+  // Build a relative path from the source file's directory to the html/ folder
+  const sourceDirectory = path.dirname(path.resolve(sourcePath))
+  const htmlDirectory   = path.join(sourceDirectory, 'html')
+  let relativeHtmlPath  = path.relative(sourceDirectory, htmlDirectory).replace(/\\/g, '/')
 
-  const importLine = `import { ${[...used].sort().join(', ')} } from '${rel}'`
-  return { blocks: updated, importLine }
+  if (!relativeHtmlPath.startsWith('.')) {
+    relativeHtmlPath = './' + relativeHtmlPath
+  }
+
+  const sortedComponentNames = [...usedHtmlComponents].sort().join(', ')
+  const importLine = `import { ${sortedComponentNames} } from '${relativeHtmlPath}'`
+
+  return { blocks: capitalizedBlocks, importLine }
 }

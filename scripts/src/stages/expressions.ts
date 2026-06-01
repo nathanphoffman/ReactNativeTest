@@ -1,124 +1,164 @@
-import * as fs from 'fs'
-import * as os from 'os'
-import * as path from 'path'
-import { spawnSync } from 'child_process'
+import { runTranscryptBatch } from './transcrypt'
 
-interface JsxExpr {
-  blockIdx: number
-  start: number
-  end: number
-  expr: string
+
+interface JsxExpression {
+  blockIndex: number
+  startOffset: number
+  endOffset:   number
+  pythonExpr:  string
 }
 
-/** Find all top-level {…} expressions in a JSX block using brace-depth tracking. */
-function findJsxExprs(block: string): Array<[number, number, string]> {
-  const results: Array<[number, number, string]> = []
-  let depth = 0
-  let start = -1
 
-  for (let i = 0; i < block.length; i++) {
-    if (block[i] === '{') {
-      if (depth === 0) start = i
-      depth++
-    } else if (block[i] === '}') {
-      depth--
-      if (depth === 0 && start !== -1) {
-        results.push([start, i + 1, block.slice(start + 1, i)])
-        start = -1
+/**
+ * Find all top-level {…} expressions in a JSX block using brace-depth tracking.
+ * Returns an array of [startOffset, endOffset, expressionContent] tuples.
+ *
+ * "Top-level" means depth 0 — nested braces inside the expression are
+ * counted but do not produce additional entries.
+ */
+function findTopLevelBraceExpressions(block: string): Array<[number, number, string]> {
+  const expressions: Array<[number, number, string]> = []
+  let braceDepth = 0
+  let expressionStart = -1
+
+  for (let charIndex = 0; charIndex < block.length; charIndex++) {
+    const char = block[charIndex]
+
+    if (char === '{') {
+      if (braceDepth === 0) expressionStart = charIndex
+      braceDepth++
+
+    } else if (char === '}') {
+      braceDepth--
+
+      if (braceDepth === 0 && expressionStart !== -1) {
+        const content = block.slice(expressionStart + 1, charIndex)
+        expressions.push([expressionStart, charIndex + 1, content])
+        expressionStart = -1
       }
     }
   }
-  return results
+
+  return expressions
 }
 
+
 /**
- * Extract the RHS of a var assignment from Transcrypt output using brace-depth
- * tracking. Handles function bodies correctly (stops at `;` only at depth 0).
+ * Extract the right-hand side of a compiled Transcrypt var assignment,
+ * using brace-depth tracking to handle multi-line function bodies correctly.
+ *
+ * Stops at the first `;` found at brace depth 0, so:
+ *   var __pyx_jexpr_0__ = function () { return x; };
+ * correctly returns `function () { return x; }` rather than stopping
+ * at the `;` inside the function body.
  */
-function extractRhs(jsOut: string, idx: number): string | null {
-  const marker = `var __pyx_jexpr_${idx}__`
-  const pos = jsOut.indexOf(marker)
-  if (pos === -1) return null
+function extractCompiledRightHandSide(transcryptOutput: string, expressionIndex: number): string | null {
+  const variableMarker = `var __pyx_jexpr_${expressionIndex}__`
+  const markerPosition = transcryptOutput.indexOf(variableMarker)
 
-  const eq = jsOut.indexOf('=', pos) + 1
-  let depth = 0
+  if (markerPosition === -1) return null
 
-  for (let i = eq; i < jsOut.length; i++) {
-    const ch = jsOut[i]
-    if (ch === '{') depth++
-    else if (ch === '}') depth--
-    else if (ch === ';' && depth === 0) return jsOut.slice(eq, i).trim()
+  const assignmentStart = transcryptOutput.indexOf('=', markerPosition) + 1
+  let braceDepth = 0
+
+  for (let charIndex = assignmentStart; charIndex < transcryptOutput.length; charIndex++) {
+    const char = transcryptOutput[charIndex]
+
+    if      (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    else if (char === ';' && braceDepth === 0) {
+      return transcryptOutput.slice(assignmentStart, charIndex).trim()
+    }
   }
+
   return null
 }
 
+
 /**
- * Batch-compile all Python expressions inside JSX {} blocks through Transcrypt.
- * Runs a single Transcrypt subprocess for all expressions in all blocks.
- * Falls back to returning blocks unchanged if Transcrypt fails.
+ * Batch-compile all Python expressions found inside JSX {} blocks through Transcrypt.
+ *
+ * Collects every {…} expression across all blocks, wraps them as Python variable
+ * assignments in a single temp file, runs one Transcrypt subprocess, then
+ * substitutes the compiled JS back into the original block positions.
+ *
+ * Replacements are applied in reverse offset order per block to preserve
+ * string offsets during the substitution loop.
+ *
+ * Falls back to returning blocks unchanged if the Transcrypt subprocess fails.
  */
-export function compileJsxExprs(blocks: string[], srcPath: string): string[] {
-  const candidates: JsxExpr[] = []
-  for (let bi = 0; bi < blocks.length; bi++) {
-    for (const [start, end, expr] of findJsxExprs(blocks[bi])) {
-      candidates.push({ blockIdx: bi, start, end, expr })
+export function compilePythonExpressionsInJsxBlocks(
+  jsxBlocks: string[],
+  sourcePath: string
+): string[] {
+  // Collect all {…} expressions across all blocks
+  const allExpressions: JsxExpression[] = []
+
+  for (let blockIndex = 0; blockIndex < jsxBlocks.length; blockIndex++) {
+    const exprsInBlock = findTopLevelBraceExpressions(jsxBlocks[blockIndex])
+
+    for (const [startOffset, endOffset, pythonExpr] of exprsInBlock) {
+      allExpressions.push({ blockIndex, startOffset, endOffset, pythonExpr })
     }
   }
 
-  if (candidates.length === 0) return blocks
+  if (allExpressions.length === 0) return jsxBlocks
 
-  const batchLines = candidates.map((c, i) => `__pyx_jexpr_${i}__ = ${c.expr}`)
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pyx_jexpr_'))
+  // Write one Python assignment per expression: __pyx_jexpr_0__ = <expr>
+  const pythonAssignmentLines = allExpressions.map(
+    ({ pythonExpr }, index) => `__pyx_jexpr_${index}__ = ${pythonExpr}`
+  )
 
-  try {
-    const tmpPy = path.join(tmpDir, '__pyx_jexprs__.py')
-    fs.writeFileSync(tmpPy, batchLines.join('\n'))
+  const transcryptOutput = runTranscryptBatch(
+    pythonAssignmentLines,
+    '__pyx_jexprs__',
+    sourcePath
+  )
 
-    const result = spawnSync(
-      'python3',
-      ['-m', 'transcrypt', '--nomin', '--esv', '6', '__pyx_jexprs__.py'],
-      { cwd: tmpDir, encoding: 'utf8' }
-    )
+  if (transcryptOutput === null) return jsxBlocks
 
-    if (result.status !== 0) {
-      console.warn(`Warning: JSX expression compile failed in ${srcPath} — leaving {} unchanged`)
-      return blocks
+  // Extract the compiled JS for each expression
+  const compiledExpressions = new Map<number, string>()
+
+  for (let exprIndex = 0; exprIndex < allExpressions.length; exprIndex++) {
+    const compiledJs = extractCompiledRightHandSide(transcryptOutput, exprIndex)
+    if (compiledJs !== null) {
+      compiledExpressions.set(exprIndex, compiledJs)
     }
+  }
 
-    const jsOut = fs.readFileSync(
-      path.join(tmpDir, '__target__', '__pyx_jexprs__.js'),
-      'utf8'
-    )
+  // Group expressions by their block index
+  const expressionsByBlock = new Map<number, Array<{ exprIndex: number; startOffset: number; endOffset: number }>>()
 
-    // Extract all compiled RHS values
-    const compiled = new Map<number, string>()
-    for (let idx = 0; idx < candidates.length; idx++) {
-      const rhs = extractRhs(jsOut, idx)
-      if (rhs !== null) compiled.set(idx, rhs)
+  allExpressions.forEach(({ blockIndex, startOffset, endOffset }, exprIndex) => {
+    if (!expressionsByBlock.has(blockIndex)) {
+      expressionsByBlock.set(blockIndex, [])
     }
+    expressionsByBlock.get(blockIndex)!.push({ exprIndex, startOffset, endOffset })
+  })
 
-    // Group replacements by block, apply in reverse offset order
-    const byBlock = new Map<number, JsxExpr[]>()
-    candidates.forEach((c, i) => {
-      if (!byBlock.has(c.blockIdx)) byBlock.set(c.blockIdx, [])
-      byBlock.get(c.blockIdx)!.push({ ...c, blockIdx: i })
-    })
+  // Apply compiled substitutions back into each block (reverse order to preserve offsets)
+  const processedBlocks = [...jsxBlocks]
 
-    const result_blocks = [...blocks]
-    for (const [bi, exprs] of byBlock) {
-      let block = result_blocks[bi]
-      const sorted = [...exprs].sort((a, b) => b.start - a.start)
-      for (const { blockIdx: idx, start, end } of sorted) {
-        const rhs = compiled.get(idx)
-        if (rhs !== undefined) {
-          block = block.slice(0, start) + '{' + rhs + '}' + block.slice(end)
-        }
+  for (const [blockIndex, expressions] of expressionsByBlock) {
+    let blockContent = processedBlocks[blockIndex]
+
+    const reverseSorted = [...expressions].sort((a, b) => b.startOffset - a.startOffset)
+
+    for (const { exprIndex, startOffset, endOffset } of reverseSorted) {
+      const compiledJs = compiledExpressions.get(exprIndex)
+
+      if (compiledJs !== undefined) {
+        blockContent = (
+          blockContent.slice(0, startOffset) +
+          '{' + compiledJs + '}' +
+          blockContent.slice(endOffset)
+        )
       }
-      result_blocks[bi] = block
     }
 
-    return result_blocks
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true })
+    processedBlocks[blockIndex] = blockContent
   }
+
+  return processedBlocks
 }

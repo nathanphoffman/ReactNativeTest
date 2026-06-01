@@ -1,49 +1,73 @@
 /**
- * Remove JSX attributes whose names match namePattern, including their values.
- * Uses brace-depth scanning so values like {lambda: fn()} are consumed fully.
+ * Remove all JSX attributes whose names match the given pattern, including
+ * their values. Uses brace-depth scanning so values containing nested braces
+ * (e.g. `rn:onPress={lambda: fn()}`) are consumed fully rather than stopping
+ * at the first `}`.
  */
-export function stripAttrs(block: string, namePattern: RegExp): string {
-  const attrRe = new RegExp(`(\\s+)(${namePattern.source})(=(?:"[^"]*"|'[^']*'|\\{))?`, 'g')
-  let result = ''
-  let i = 0
+export function stripMatchingJsxAttributes(block: string, namePattern: RegExp): string {
+  const attributeRegex = new RegExp(
+    `(\\s+)(${namePattern.source})(=(?:"[^"]*"|'[^']*'|\\{))?`,
+    'g'
+  )
 
-  while (i < block.length) {
-    attrRe.lastIndex = i
-    const m = attrRe.exec(block)
-    if (!m) {
-      result += block.slice(i)
+  let output    = ''
+  let scanIndex = 0
+
+  while (scanIndex < block.length) {
+    attributeRegex.lastIndex = scanIndex
+    const match = attributeRegex.exec(block)
+
+    if (!match) {
+      output += block.slice(scanIndex)
       break
     }
-    result += block.slice(i, m.index)
 
-    if (m[3]?.endsWith('{')) {
-      // Brace-depth scan to consume the full {…} value
-      let j = m.index + m[0].length
-      let depth = 1
-      while (j < block.length && depth > 0) {
-        if (block[j] === '{') depth++
-        else if (block[j] === '}') depth--
-        j++
+    // Append everything before this attribute
+    output += block.slice(scanIndex, match.index)
+
+    if (match[3]?.endsWith('{')) {
+      // The value is a JSX expression — scan forward using brace depth
+      // to consume the entire {…} value including any nested braces
+      let scanPosition = match.index + match[0].length
+      let braceDepth   = 1
+
+      while (scanPosition < block.length && braceDepth > 0) {
+        if      (block[scanPosition] === '{') braceDepth++
+        else if (block[scanPosition] === '}') braceDepth--
+        scanPosition++
       }
-      i = j
+
+      scanIndex = scanPosition
+
     } else {
-      i = m.index + m[0].length
+      // String value or boolean attribute — the regex already consumed it
+      scanIndex = match.index + match[0].length
     }
   }
-  return result
+
+  return output
 }
 
+
 /**
- * Transform platform-specific props in JSX blocks.
- *   native: rn:attr → attr  (strip the prefix, keep the prop)
- *   web:    rn:attr → removed entirely
+ * Transform platform-specific `rn:` prefixed props in JSX blocks.
+ *
+ * native target:
+ *   rn:onPress={…}  →  onPress={…}   (prefix stripped, prop kept)
+ *
+ * web target:
+ *   rn:onPress={…}  →  (removed entirely)
+ *
+ * Non-prefixed props like onClick, onChange, className are passed through
+ * unchanged on both targets. The html/ wrapper components handle translating
+ * web event names to their React Native equivalents at runtime.
  */
-export function transformProps(blocks: string[], target: string): string[] {
+export function transformPlatformSpecificProps(blocks: string[], target: string): string[] {
   return blocks.map(block => {
     if (target === 'native') {
       return block.replace(/\brn:(\w+)/g, '$1')
     } else {
-      return stripAttrs(block, /rn:\w+/)
+      return stripMatchingJsxAttributes(block, /rn:\w+/)
     }
   })
 }

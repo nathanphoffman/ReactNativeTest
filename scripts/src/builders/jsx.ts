@@ -1,19 +1,27 @@
-import * as fs from 'fs'
+import * as fs   from 'fs'
 import * as path from 'path'
 
-import { autoCapitalize } from '../stages/capitalize'
-import { transformProps } from '../stages/props'
-import { discoverHtmlComponents } from '../utils/html'
-import { componentName, webOutputPath } from '../utils/paths'
+import { autoCapitalizeHtmlElements }    from '../stages/capitalize'
+import { transformPlatformSpecificProps } from '../stages/props'
+import { discoverHtmlComponents }        from '../utils/html'
+import { componentName, webOutputPath }  from '../utils/paths'
+import { BuildTarget }                   from '../utils/types'
+
 
 /**
- * Build a hand-written .html.jsx source file into a .jsx output.
- * Applies auto-capitalize, html import injection, and rn: prop transforms.
- * Skips silently if a .pyx counterpart exists (pass 1 handles it).
+ * Build a hand-written .html.jsx source file into a .jsx output component.
+ *
+ * Applies the same html-element capitalization, import injection, and
+ * platform prop transforms that the .pyx pipeline uses — but skips
+ * Transcrypt entirely since the source is already JavaScript.
+ *
+ * Skips the file if a .pyx counterpart exists (pass 1 handles it).
  */
-export function buildJsx(jsxPath: string, target: string): void {
+export function buildJsx(jsxPath: string, target: BuildTarget): void {
+
   // Conflict check: Component.html.jsx vs Component.pyx
   const pyxCounterpart = path.join(path.dirname(jsxPath), componentName(jsxPath) + '.pyx')
+
   if (fs.existsSync(pyxCounterpart)) {
     console.log(`Skip  ${jsxPath}  (pass 1 handles ${path.basename(pyxCounterpart)})`)
     return
@@ -21,62 +29,85 @@ export function buildJsx(jsxPath: string, target: string): void {
 
   let source = fs.readFileSync(jsxPath, 'utf8')
 
-  // Parse // !next: directives (JS-style comments for .html.jsx)
+
+  // ── Parse // !next: directives (JS-style, since .html.jsx is not Python) ──
+
   const nextDirectives: string[] = []
-  const cleanLines: string[] = []
+  const linesWithoutDirectives: string[] = []
+
   for (const line of source.split('\n')) {
-    const stripped = line.trim()
-    if (stripped.startsWith('// !next:')) {
-      nextDirectives.push(stripped.slice('// !next:'.length).trim())
+    const trimmed = line.trim()
+
+    if (trimmed.startsWith('// !next:')) {
+      nextDirectives.push(trimmed.slice('// !next:'.length).trim())
     } else {
-      cleanLines.push(line)
+      linesWithoutDirectives.push(line)
     }
   }
-  source = cleanLines.join('\n')
 
-  // Strip existing ./html import — will be regenerated
-  source = source.replace(/^import\s*\{[^}]*\}\s*from\s*['"]\.\/html['"];?\s*\n?/gm, '')
+  source = linesWithoutDirectives.join('\n')
 
-  // Auto-capitalize and inject ./html import [native only]
-  let htmlImport: string | null = null
+
+  // ── Strip existing ./html import (will be regenerated) ────────────────────
+
+  source = source.replace(
+    /^import\s*\{[^}]*\}\s*from\s*['"]\.\/html['"];?\s*\n?/gm,
+    ''
+  )
+
+
+  // ── Auto-capitalize html elements and inject ./html import (native only) ──
+
+  let htmlImportLine: string | null = null
+
   if (target === 'native') {
-    const htmlMap = discoverHtmlComponents(jsxPath)
-    const result = autoCapitalize([source], htmlMap, jsxPath)
-    source = result.blocks[0]
-    htmlImport = result.importLine
+    const htmlComponentMap = discoverHtmlComponents(jsxPath)
+    const { blocks, importLine } = autoCapitalizeHtmlElements([source], htmlComponentMap, jsxPath)
+    source = blocks[0]
+    htmlImportLine = importLine
   }
 
-  // Transform rn: props
-  source = transformProps([source], target)[0]
 
-  // Insert html import after the last existing import line
-  if (htmlImport) {
+  // ── Transform platform-specific rn: props ─────────────────────────────────
+
+  source = transformPlatformSpecificProps([source], target)[0]
+
+
+  // ── Insert html import after the last existing import statement ───────────
+
+  if (htmlImportLine) {
     const lines = source.split('\n')
-    let lastImportIdx = -1
-    lines.forEach((line, i) => {
-      if (/^import\s/.test(line.trim())) lastImportIdx = i
+    let lastImportLineIndex = -1
+
+    lines.forEach((line, index) => {
+      if (/^import\s/.test(line.trim())) lastImportLineIndex = index
     })
-    if (lastImportIdx >= 0) {
-      lines.splice(lastImportIdx + 1, 0, htmlImport)
+
+    if (lastImportLineIndex >= 0) {
+      lines.splice(lastImportLineIndex + 1, 0, htmlImportLine)
       source = lines.join('\n')
     } else {
-      source = htmlImport + '\n' + source
+      source = htmlImportLine + '\n' + source
     }
   }
 
-  // Prepend Next.js directives for web target
-  const prefix = target === 'web'
-    ? nextDirectives.map(d => `'${d}';\n`).join('')
+
+  // ── Prepend Next.js directives for web target ─────────────────────────────
+
+  const nextJsPrefix = target === 'web'
+    ? nextDirectives.map(directive => `'${directive}';\n`).join('')
     : ''
 
-  const output = prefix + source
+  const finalOutput = nextJsPrefix + source
 
-  // Determine output path: Component.html.jsx → Component.jsx
+
+  // ── Write output ──────────────────────────────────────────────────────────
+
   const name = componentName(jsxPath)
-  const dest = target === 'web'
+  const destinationPath = target === 'web'
     ? webOutputPath(jsxPath)
     : path.join(path.dirname(jsxPath), name + '.jsx')
 
-  fs.writeFileSync(dest, output)
-  console.log(`Built [${target}]  ${jsxPath}  →  ${dest}`)
+  fs.writeFileSync(destinationPath, finalOutput)
+  console.log(`Built [${target}]  ${jsxPath}  →  ${destinationPath}`)
 }

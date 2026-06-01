@@ -5,6 +5,7 @@ Build pipeline for .pyx (Python + JSX) React Native components.
 Workflow:
   1. Parse # !js-import: and # !js-export: directives
   2. Extract <jsx>...</jsx> blocks → string placeholders (with nesting guard)
+  2b. Batch-compile Python expressions inside JSX {} through Transcrypt
   3. Run Transcrypt on the resulting valid-Python source
   4. Strip Transcrypt boilerplate from output JS
   5. Re-inject JSX where the placeholders were
@@ -17,6 +18,77 @@ import sys
 import shutil
 import subprocess
 import tempfile
+
+
+def _find_jsx_exprs(block: str):
+    """Yield (start, end, content) for each top-level {…} in a JSX block."""
+    depth = 0
+    start = None
+    for i, ch in enumerate(block):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                yield start, i + 1, block[start + 1:i]
+                start = None
+
+
+def _compile_jsx_exprs(jsx_blocks: list[str], pyx_path: str) -> list[str]:
+    """Batch-compile Python expressions inside JSX {} through Transcrypt."""
+    # Collect all expressions: (block_idx, start, end, expr_str)
+    candidates: list[tuple[int, int, int, str]] = []
+    for bi, block in enumerate(jsx_blocks):
+        for start, end, expr in _find_jsx_exprs(block):
+            candidates.append((bi, start, end, expr))
+
+    if not candidates:
+        return jsx_blocks
+
+    # One temp file: __pyx_jexpr_N__ = <expr>  for each candidate
+    batch_lines = [
+        f"__pyx_jexpr_{i}__ = {expr}"
+        for i, (_, _, _, expr) in enumerate(candidates)
+    ]
+    tmpdir = tempfile.mkdtemp(prefix="pyx_jexpr_")
+    try:
+        tmp_py = os.path.join(tmpdir, "__pyx_jexprs__.py")
+        with open(tmp_py, "w") as f:
+            f.write("\n".join(batch_lines))
+        result = subprocess.run(
+            [sys.executable, "-m", "transcrypt", "--nomin", "--esv", "6", "__pyx_jexprs__.py"],
+            cwd=tmpdir, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            print(f"Warning: JSX expression compile failed in {pyx_path} — leaving {{}} unchanged",
+                  file=sys.stderr)
+            return jsx_blocks
+        with open(os.path.join(tmpdir, "__target__", "__pyx_jexprs__.js")) as f:
+            js_out = f.read()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Extract compiled RHS values: var __pyx_jexpr_N__ = <rhs>;
+    compiled: dict[int, str] = {}
+    for m in re.finditer(r'var __pyx_jexpr_(\d+)__\s*=\s*(.*?);', js_out, re.DOTALL):
+        compiled[int(m.group(1))] = m.group(2).strip()
+
+    # Substitute back — process each block's replacements in reverse offset order
+    jsx_blocks = list(jsx_blocks)
+    by_block: dict[int, list[tuple[int, int, int]]] = {}
+    for i, (bi, start, end, _) in enumerate(candidates):
+        by_block.setdefault(bi, []).append((i, start, end))
+
+    for bi, replacements in by_block.items():
+        block = jsx_blocks[bi]
+        for idx, start, end in sorted(replacements, key=lambda x: x[1], reverse=True):
+            if idx in compiled:
+                block = block[:start] + '{' + compiled[idx] + '}' + block[end:]
+        jsx_blocks[bi] = block
+
+    return jsx_blocks
 
 
 def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
@@ -73,6 +145,9 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
 
     source = pattern.sub(store_jsx, source)
 
+    # --- 2b. Compile Python expressions inside JSX {} through Transcrypt ---
+    jsx_blocks = _compile_jsx_exprs(jsx_blocks, pyx_path)
+
     # --- 3. Write to a temp dir and run Transcrypt ---
     component_name = os.path.splitext(os.path.basename(pyx_path))[0]
     tmpdir = tempfile.mkdtemp(prefix="pyx_build_")
@@ -116,7 +191,7 @@ def build_pyx(pyx_path: str, output_path: str | None = None) -> None:
     js = re.sub(r"^\s*var __name__\s*=.*?;\s*\n", "", js, flags=re.MULTILINE)
     # Transcrypt emits `export var Foo = function`; strip the `export` keyword
     # since we append an explicit export directive ourselves
-    js = re.sub(r"^export (var \w+ = function)", r"\1", js, flags=re.MULTILINE)
+    js = re.sub(r"^export (var \w+)", r"\1", js, flags=re.MULTILINE)
     js = js.strip()
 
     # --- 5. Re-inject JSX ---

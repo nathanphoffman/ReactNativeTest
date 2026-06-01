@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "ReactNativeTest",
+    "slug": "react-native-test",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a0a"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": ["expo-router"],
+    "scheme": "rn-test",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

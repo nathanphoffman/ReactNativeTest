@@ -22,8 +22,8 @@ export function runTranscrypt(pythonSource: string, componentName: string): stri
     fs.writeFileSync(inputFile, pythonSource)
 
     const transcryptResult = spawnSync(
-      'python3',
-      ['-m', 'transcrypt', '--nomin', '--esv', '6', `${componentName}.py`],
+      'transcrypt',
+      ['--nomin', '--esv', '6', `${componentName}.py`],
       { cwd: temporaryDirectory, encoding: 'utf8' }
     )
 
@@ -61,8 +61,8 @@ export function runTranscryptBatch(
     fs.writeFileSync(inputFile, pythonLines.join('\n'))
 
     const transcryptResult = spawnSync(
-      'python3',
-      ['-m', 'transcrypt', '--nomin', '--esv', '6', `${batchFileName}.py`],
+      'transcrypt',
+      ['--nomin', '--esv', '6', `${batchFileName}.py`],
       { cwd: temporaryDirectory, encoding: 'utf8' }
     )
 

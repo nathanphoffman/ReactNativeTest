@@ -17,8 +17,7 @@
     "watch:pyx:web": "chokidar \"components/**/*.pyx\" \"components/**/*.html.jsx\" -c \"tsx scripts/src/cli.ts --target web {path}\"",
     "watch:pyx:all": "concurrently \"npm run watch:pyx\" \"npm run watch:pyx:web\"",
     "typecheck:scripts": "cd scripts && npm run typecheck",
-    "setup:pyx": "pip install transcrypt && cd scripts && npm install",
-    "setup:web": "cd web && npm install"
+    "setup": "bash setup.sh"
   },
   "dependencies": {
     "expo": "~56.0.0",
